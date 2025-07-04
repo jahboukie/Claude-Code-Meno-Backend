@@ -335,16 +335,25 @@ async function logAuditAction(
   req?: any
 ) {
   try {
-    await db.collection('audit_logs').add({
+    // Build audit log object, excluding undefined fields
+    const auditLog: any = {
       userId,
       action,
-      resourceId,
-      resourceType,
       details,
       timestamp: FieldValue.serverTimestamp(),
       ipAddress: req?.ip || req?.connection?.remoteAddress || '0.0.0.0',
       userAgent: req?.get('User-Agent') || 'Unknown',
-    });
+    };
+
+    // Only add resourceId and resourceType if they are defined
+    if (resourceId !== undefined) {
+      auditLog.resourceId = resourceId;
+    }
+    if (resourceType !== undefined) {
+      auditLog.resourceType = resourceType;
+    }
+
+    await db.collection('audit_logs').add(auditLog);
   } catch (error) {
     logger.error('Audit logging failed:', error);
   }

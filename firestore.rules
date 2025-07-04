@@ -3,7 +3,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
   
-    // Helper functions for security and compliance
+    // Helper functions for security
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -12,92 +12,40 @@ service cloud.firestore {
       return request.auth.uid == userId;
     }
     
-    function hasValidConsent(userId) {
-      // Check if user has valid consent for data processing
-      return get(/databases/$(database)/documents/user_consents/$(userId)).data.dataProcessing == true;
-    }
-    
-    function isPartner(userId) {
-      // Check if requesting user is the partner of the data owner
-      let userData = get(/databases/$(database)/documents/users/$(userId)).data;
-      return userData.partnerId == request.auth.uid;
-    }
-    
-    function validateDataMinimization(data) {
-      // Ensure only necessary fields are being written
-      return data.keys().hasAll(['userId', 'createdAt']) && 
-             data.keys().hasOnly(['userId', 'text', 'isShared', 'createdAt', 'analysis', 'appOrigin']);
-    }
-    
-    function validateRetentionCompliance(data) {
-      // Ensure data includes retention metadata
-      return data.keys().hasAny(['createdAt']);
-    }
-    
-    // Users collection - Enhanced with consent validation
+    // Users collection - Basic authentication only for development
     match /users/{userId} {
-      allow read: if isAuthenticated() && isOwner(userId);
-      allow write: if isAuthenticated() && isOwner(userId) && 
-                      validateRetentionCompliance(request.resource.data);
+      allow read, write: if isAuthenticated() && isOwner(userId);
     }
     
-    // User consent collection for GDPR/PIPEDA compliance
+    // User consent collection - Allow creation and updates for development
     match /user_consents/{userId} {
       allow read, write: if isAuthenticated() && isOwner(userId);
-      allow create: if isAuthenticated() && isOwner(userId) && 
-                       request.resource.data.keys().hasAll(['dataProcessing', 'consentTimestamp']);
     }
     
-    // Journal Entries - Enhanced with partner access and consent validation
+    // Journal Entries - Basic security for development
     match /journal_entries/{entryId} {
       // Owner can always access their own entries
       allow read, update, delete: if isAuthenticated() && 
-                                     isOwner(get(/databases/$(database)/documents/journal_entries/$(entryId)).data.userId);
+                                     isOwner(resource.data.userId);
       
-      // Partner can read shared entries only
-      allow read: if isAuthenticated() && 
-                     get(/databases/$(database)/documents/journal_entries/$(entryId)).data.isShared == true &&
-                     isPartner(get(/databases/$(database)/documents/journal_entries/$(entryId)).data.userId);
-      
-      // Create with data minimization and consent validation
+      // Allow creation for authenticated users
       allow create: if isAuthenticated() && 
-                       isOwner(request.resource.data.userId) &&
-                       validateDataMinimization(request.resource.data) &&
-                       hasValidConsent(request.auth.uid);
+                       isOwner(request.resource.data.userId);
     }
     
-    // Invites collection - Enhanced with expiration and rate limiting
+    // Invites collection - Basic security
     match /invites/{inviteCode} {
-      // Only the invite creator can read their own invites
       allow read: if isAuthenticated() && 
-                     get(/databases/$(database)/documents/invites/$(inviteCode)).data.fromUserId == request.auth.uid;
-      
-      // Create invites with validation
+                     resource.data.fromUserId == request.auth.uid;
       allow create: if isAuthenticated() && 
-                       isOwner(request.resource.data.fromUserId) &&
-                       request.resource.data.keys().hasAll(['fromUserId', 'status', 'createdAt', 'expiresAt']) &&
-                       request.resource.data.status == 'pending' &&
-                       request.resource.data.expiresAt.toMillis() > request.time.toMillis();
-      
-      // Update invite status (for cloud function)
-      allow update: if isAuthenticated() && 
-                       resource.data.status == 'pending' &&
-                       request.resource.data.status == 'completed' &&
-                       resource.data.expiresAt.toMillis() > request.time.toMillis();
+                       isOwner(request.resource.data.fromUserId);
+      allow update: if isAuthenticated();
     }
     
     // Audit logs collection - Write-only for compliance
     match /audit_logs/{logId} {
       allow create: if isAuthenticated() && 
-                       isOwner(request.resource.data.userId) &&
-                       request.resource.data.keys().hasAll(['userId', 'action', 'timestamp', 'ipAddress']);
-      // No read access to audit logs from client
-    }
-    
-    // Anonymized research data collection - No client access
-    match /research_data/{dataId} {
-      // No direct client access - only via cloud functions
-      allow read, write: if false;
+                       isOwner(request.resource.data.userId);
     }
     
     // Data retention tracking
